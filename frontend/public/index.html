@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinuxBackup — Backup & Restore Engine</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0d0f12;
+    --bg1: #13161b;
+    --bg2: #191d24;
+    --bg3: #1e232c;
+    --border: #2a303d;
+    --border2: #343c4d;
+    --text: #c9d1e0;
+    --muted: #5a6478;
+    --accent: #4fc3f7;
+    --accent2: #00e5aa;
+    --warn: #ffa726;
+    --danger: #ef5350;
+    --success: #66bb6a;
+    --purple: #ce93d8;
+    --yellow: #ffee58;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* ── Layout ── */
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .logo { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent2); letter-spacing: 0.5px; }
+  .logo span { color: var(--muted); font-weight: 400; }
+  .header-sys { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); display: flex; gap: 16px; }
+  .sys-pill { display: flex; align-items: center; gap: 5px; }
+  .sys-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent2); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .tabs {
+    display: flex; gap: 0;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    padding: 0 16px;
+  }
+  .tab {
+    padding: 8px 16px; cursor: pointer;
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase;
+    border-bottom: 2px solid transparent; transition: all 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 280px; flex-shrink: 0;
+    background: var(--bg1);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-section { padding: 10px 14px 6px; border-bottom: 1px solid var(--border); }
+  .sidebar-title { font-family: var(--mono); font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+
+  .job-list { flex: 1; overflow-y: auto; }
+  .job-item {
+    padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--border);
+    transition: background 0.1s; position: relative;
+  }
+  .job-item:hover { background: var(--bg2); }
+  .job-item.selected { background: var(--bg3); border-left: 2px solid var(--accent); }
+  .job-name { font-family: var(--mono); font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .job-meta { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+  .job-status {
+    display: inline-block; font-size: 9px; font-family: var(--mono); text-transform: uppercase;
+    padding: 1px 5px; border-radius: 2px; margin-top: 3px; letter-spacing: 0.5px;
+  }
+  .status-queued { background: rgba(90,100,120,0.2); color: var(--muted); }
+  .status-running { background: rgba(79,195,247,0.15); color: var(--accent); }
+  .status-paused { background: rgba(255,167,38,0.15); color: var(--warn); }
+  .status-completed { background: rgba(102,187,106,0.15); color: var(--success); }
+  .status-failed { background: rgba(239,83,80,0.15); color: var(--danger); }
+  .status-cancelled { background: rgba(90,100,120,0.2); color: var(--muted); }
+
+  /* ── Content panels ── */
+  .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .panel.active { display: flex; }
+
+  /* ── Form panel ── */
+  .form-scroll { flex: 1; overflow-y: auto; padding: 16px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 900px; }
+  .form-full { grid-column: 1 / -1; }
+
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-family: var(--mono); font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .field input, .field select, .field textarea {
+    background: var(--bg2); border: 1px solid var(--border2);
+    color: var(--text); font-family: var(--mono); font-size: 12px;
+    padding: 7px 10px; border-radius: 3px; outline: none; transition: border 0.15s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+  .field textarea { resize: vertical; min-height: 60px; }
+  .field select option { background: var(--bg2); }
+
+  .field-hint { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+
+  .section-label {
+    font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--accent); margin: 16px 0 10px;
+    padding-bottom: 5px; border-bottom: 1px solid var(--border);
+  }
+
+  /* Disk picker */
+  .disk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .disk-card {
+    background: var(--bg2); border: 1px solid var(--border2); border-radius: 3px;
+    padding: 10px 12px; cursor: pointer; transition: all 0.15s;
+    position: relative;
+  }
+  .disk-card:hover { border-color: var(--accent); }
+  .disk-card.selected { border-color: var(--accent2); background: rgba(0,229,170,0.05); }
+  .disk-card.recommended::before {
+    content: '★ REC';
+    position: absolute; top: 5px; right: 8px;
+    font-family: var(--mono); font-size: 8px; color: var(--accent2); letter-spacing: 0.5px;
+  }
+  .disk-card .dk-name { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+  .disk-card .dk-size { font-family: var(--mono); font-size: 11px; color: var(--text); }
+  .disk-card .dk-info { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .disk-card .dk-warn { font-family: var(--mono); font-size: 9px; color: var(--warn); margin-top: 3px; }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--bg1); flex-shrink: 0; }
+  .btn {
+    padding: 7px 16px; font-family: var(--mono); font-size: 11px; font-weight: 600;
+    border: 1px solid; border-radius: 3px; cursor: pointer; transition: all 0.15s;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .btn-primary { background: rgba(79,195,247,0.1); border-color: var(--accent); color: var(--accent); }
+  .btn-primary:hover { background: rgba(79,195,247,0.2); }
+  .btn-success { background: rgba(0,229,170,0.1); border-color: var(--accent2); color: var(--accent2); }
+  .btn-success:hover { background: rgba(0,229,170,0.2); }
+  .btn-warn { background: rgba(255,167,38,0.1); border-color: var(--warn); color: var(--warn); }
+  .btn-warn:hover { background: rgba(255,167,38,0.2); }
+  .btn-danger { background: rgba(239,83,80,0.1); border-color: var(--danger); color: var(--danger); }
+  .btn-danger:hover { background: rgba(239,83,80,0.2); }
+  .btn-muted { background: transparent; border-color: var(--border2); color: var(--muted); }
+  .btn-muted:hover { color: var(--text); border-color: var(--border2); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Progress Panel ── */
+  .progress-panel { flex: 1; overflow-y: auto; padding: 16px; }
+
+  .job-detail { max-width: 900px; }
+  .job-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+  .job-title { font-family: var(--mono); font-size: 16px; color: var(--text); font-weight: 600; }
+  .job-subtitle { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+  .progress-bar-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: 2px; overflow: hidden; height: 18px; position: relative; }
+  .progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent) 0%, var(--accent2) 100%); transition: width 0.5s ease; position: relative; }
+  .progress-bar.paused { background: linear-gradient(90deg, var(--warn) 0%, #ffb74d 100%); }
+  .progress-bar::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(90deg, transparent, transparent 10px, rgba(255,255,255,0.04) 10px, rgba(255,255,255,0.04) 20px);
+    animation: stripes 1s linear infinite;
+  }
+  @keyframes stripes { from{background-position:0 0} to{background-position:20px 0} }
+  .progress-pct { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-family: var(--mono); font-size: 10px; font-weight: 700; color: white; z-index: 1; }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
+  .stat-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 3px; padding: 10px 12px; }
+  .stat-label { font-family: var(--mono); font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .stat-value { font-family: var(--mono); font-size: 18px; font-weight: 700; color: var(--accent); margin-top: 3px; }
+  .stat-unit { font-size: 10px; color: var(--muted); }
+
+  /* Log terminal */
+  .log-terminal {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+    font-family: var(--mono); font-size: 11px; color: var(--text);
+    height: 200px; overflow-y: auto; padding: 8px 10px; margin-top: 12px;
+    line-height: 1.6;
+  }
+  .log-terminal .log-entry { display: flex; gap: 8px; }
+  .log-terminal .log-time { color: var(--muted); flex-shrink: 0; }
+  .log-terminal .log-msg { word-break: break-all; }
+  .log-terminal .log-warn { color: var(--warn); }
+  .log-terminal .log-error { color: var(--danger); }
+
+  /* ── Files Panel ── */
+  .files-table { width: 100%; border-collapse: collapse; }
+  .files-table th {
+    text-align: left; padding: 8px 12px;
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.8px;
+    border-bottom: 1px solid var(--border); background: var(--bg1);
+    position: sticky; top: 0;
+  }
+  .files-table td {
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: 11px;
+    vertical-align: middle;
+  }
+  .files-table tr:hover td { background: var(--bg2); }
+  .file-type-badge {
+    display: inline-block; padding: 2px 6px; border-radius: 2px;
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;
+  }
+  .ft-directory { background: rgba(79,195,247,0.15); color: var(--accent); }
+  .ft-image { background: rgba(206,147,216,0.15); color: var(--purple); }
+  .ft-rsync { background: rgba(0,229,170,0.15); color: var(--accent2); }
+  .ft-unknown { background: rgba(90,100,120,0.2); color: var(--muted); }
+
+  /* ── Disk Panel ── */
+  .disk-info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; padding: 16px; }
+  .disk-info-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 3px; padding: 12px;
+  }
+  .dic-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .dic-name { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent); }
+  .dic-model { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .dic-size { font-family: var(--mono); font-size: 12px; color: var(--text); }
+  .dic-fs { font-family: var(--mono); font-size: 10px; color: var(--accent2); }
+  .usage-bar { background: var(--bg3); height: 4px; border-radius: 2px; margin: 6px 0; }
+  .usage-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+  .usage-fill.warn { background: var(--warn); }
+  .usage-fill.danger { background: var(--danger); }
+  .dic-stats { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+  /* ── System Info Bar ── */
+  .sysbar {
+    display: flex; gap: 16px; padding: 8px 16px;
+    background: var(--bg1); border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    flex-shrink: 0;
+  }
+  .sysbar span { display: flex; align-items: center; gap: 4px; }
+  .sysbar b { color: var(--text); }
+
+  /* ── Misc ── */
+  .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 8px; color: var(--muted); font-family: var(--mono); }
+  .empty-icon { font-size: 32px; opacity: 0.3; }
+
+  .scrollable { overflow-y: auto; flex: 1; }
+
+  .inline-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 2px;
+    font-family: var(--mono); font-size: 9px;
+    background: rgba(79,195,247,0.1); color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  .toast {
+    position: fixed; bottom: 20px; right: 20px;
+    background: var(--bg3); border: 1px solid var(--border2); border-radius: 3px;
+    padding: 10px 14px; font-family: var(--mono); font-size: 11px;
+    z-index: 9999; transform: translateX(110%); transition: transform 0.3s;
+    max-width: 320px;
+  }
+  .toast.show { transform: translateX(0); }
+  .toast.success { border-left: 3px solid var(--success); }
+  .toast.error { border-left: 3px solid var(--danger); }
+  .toast.info { border-left: 3px solid var(--accent); }
+  
+  .confirm-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: none; align-items: center; justify-content: center; z-index: 999;
+  }
+  .confirm-overlay.show { display: flex; }
+  .confirm-box {
+    background: var(--bg2); border: 1px solid var(--border2); border-radius: 4px;
+    padding: 20px 24px; max-width: 400px; width: 90%;
+  }
+  .confirm-title { font-family: var(--mono); font-size: 13px; color: var(--danger); margin-bottom: 8px; }
+  .confirm-msg { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 16px; line-height: 1.6; }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: var(--bg1); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Header -->
+  <header>
+    <div class="logo">linux<span>backup</span> <span style="color:var(--border2)">|</span> <span style="font-size:11px">backup & restore engine</span></div>
+    <div class="header-sys">
+      <span class="sys-pill"><span class="dot"></span> <span id="sysHostname">—</span></span>
+      <span id="sysKernel" style="color:var(--muted)">—</span>
+      <span id="sysMem" style="color:var(--muted)">—</span>
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="backup">⟦ Backup</div>
+    <div class="tab" data-tab="restore">⟦ Restore</div>
+    <div class="tab" data-tab="jobs">⟦ Jobs</div>
+    <div class="tab" data-tab="files">⟦ Files</div>
+    <div class="tab" data-tab="disks">⟦ Disks</div>
+  </div>
+
+  <!-- System bar -->
+  <div class="sysbar" id="sysbar" style="display:none">
+    <span>CPU: <b id="sbCpu">—</b></span>
+    <span>Kernel: <b id="sbKernel">—</b></span>
+    <span>Arch: <b id="sbArch">—</b></span>
+    <span>Uptime: <b id="sbUptime">—</b></span>
+  </div>
+
+  <div class="main">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-title">Active Jobs</div>
+      </div>
+      <div class="job-list" id="jobList">
+        <div class="empty-state" style="padding:20px; font-size:10px; color:var(--muted)">No jobs yet</div>
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+
+      <!-- Backup Panel -->
+      <div class="panel active" id="panel-backup">
+        <div class="form-scroll" id="backupFormScroll">
+          <div style="margin-bottom:16px">
+            <div class="section-label">Backup Configuration</div>
+            <div class="form-grid">
+              <div class="field">
+                <label>Backup Name</label>
+                <input type="text" id="bkName" placeholder="my_backup" value="backup">
+              </div>
+              <div class="field">
+                <label>Backup Type</label>
+                <select id="bkType" onchange="onTypeChange()">
+                  <option value="directory">Directory → tar.gz (compressed archive)</option>
+                  <option value="rsync">Directory → rsync (incremental, resumable)</option>
+                  <option value="image">Disk → dd image (full disk/partition clone)</option>
+                </select>
+              </div>
+              <div class="field form-full">
+                <label>Source Path / Device</label>
+                <input type="text" id="bkSource" placeholder="/home/user  or  /dev/sda">
+                <span class="field-hint" id="bkSourceHint">Directory to backup</span>
+              </div>
+              <div class="field form-full">
+                <label>Destination Directory (leave blank for /data/backups)</label>
+                <input type="text" id="bkDest" placeholder="/data/backups">
+              </div>
+              <div class="field form-full" id="excludeField">
+                <label>Exclude Patterns (one per line)</label>
+                <textarea id="bkExcludes" placeholder="*.log&#10;tmp/&#10;.cache/">/proc
+/sys
+/dev
+/run
+/tmp</textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Disk picker (shown for image type) -->
+          <div id="diskPickerSection" style="display:none">
+            <div class="section-label">Available Disks / Partitions <span style="color:var(--muted);font-size:9px;font-weight:normal">(click to select as source)</span></div>
+            <div class="disk-grid" id="diskGrid">Loading...</div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-success" onclick="startBackup()">▶ Start Backup</button>
+          <button class="btn btn-muted" onclick="refreshDisks()">↻ Refresh Disks</button>
+        </div>
+      </div>
+
+      <!-- Restore Panel -->
+      <div class="panel" id="panel-restore">
+        <div class="form-scroll">
+          <div class="section-label">Restore Configuration</div>
+          <div class="form-grid">
+            <div class="field">
+              <label>Restore Type</label>
+              <select id="rsType" onchange="onRestoreTypeChange()">
+                <option value="directory">tar.gz archive → directory</option>
+                <option value="rsync">rsync backup → directory</option>
+                <option value="image">disk image → device</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <button class="btn btn-muted" onclick="loadBackupFiles()" style="width:100%">↻ Load Backup Files</button>
+            </div>
+            <div class="field form-full">
+              <label>Source Backup (select or type path)</label>
+              <select id="rsSourceSelect" onchange="document.getElementById('rsSource').value=this.value">
+                <option value="">— select a backup file —</option>
+              </select>
+              <input type="text" id="rsSource" placeholder="/data/backups/my_backup_2025-01-01.tar.gz" style="margin-top:5px">
+            </div>
+            <div class="field form-full">
+              <label id="rsDestLabel">Destination Directory</label>
+              <input type="text" id="rsDest" placeholder="/data/restores/my_backup_restored">
+              <span class="field-hint" id="rsDestHint">Directory where files will be extracted</span>
+            </div>
+          </div>
+
+          <div id="imageRestoreWarn" style="display:none; margin-top:12px; padding:10px 14px; background:rgba(239,83,80,0.08); border:1px solid rgba(239,83,80,0.3); border-radius:3px; font-family:var(--mono); font-size:11px; color:var(--danger); line-height:1.6">
+            ⚠ <b>WARNING:</b> Image restore will OVERWRITE the entire target device. All existing data will be destroyed. Ensure you have selected the correct device and have NO mounted filesystems on it.
+          </div>
+
+          <!-- Disk picker for image restore destination -->
+          <div id="restoreDiskSection" style="display:none; margin-top:16px">
+            <div class="section-label">Select Target Device <span style="color:var(--muted);font-size:9px;font-weight:normal">(WILL BE OVERWRITTEN)</span></div>
+            <div class="disk-grid" id="restoreDiskGrid">Loading...</div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="startRestore()">▶ Start Restore</button>
+          <button class="btn btn-muted" onclick="verifyBackup()">✓ Verify Backup</button>
+        </div>
+      </div>
+
+      <!-- Jobs Panel -->
+      <div class="panel" id="panel-jobs">
+        <div class="scrollable" id="jobsPanel">
+          <div class="progress-panel" id="jobDetailArea">
+            <div class="empty-state">
+              <div class="empty-icon">◈</div>
+              <div>Select a job from the sidebar</div>
+            </div>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-muted" onclick="clearCompletedJobs()">✕ Clear Completed</button>
+        </div>
+      </div>
+
+      <!-- Files Panel -->
+      <div class="panel" id="panel-files">
+        <div class="scrollable">
+          <table class="files-table" id="filesTable">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>Modified</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="filesBody">
+              <tr><td colspan="5" style="padding:20px; color:var(--muted); font-family:var(--mono); text-align:center">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-muted" onclick="loadFiles()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Disks Panel -->
+      <div class="panel" id="panel-disks">
+        <div class="scrollable">
+          <div style="padding:16px">
+            <div class="section-label">Filesystems</div>
+            <div id="fsGrid" class="disk-info-grid" style="padding:0; margin-bottom:16px">Loading...</div>
+            <div class="section-label">Block Devices</div>
+            <div id="disksGrid" class="disk-info-grid" style="padding:0">Loading...</div>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-muted" onclick="loadDisksPanel()">↻ Refresh</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Dialog -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <div class="confirm-title" id="confirmTitle">Confirm</div>
+    <div class="confirm-msg" id="confirmMsg">Are you sure?</div>
+    <div style="display:flex; gap:8px">
+      <button class="btn btn-danger" id="confirmOk">Confirm</button>
+      <button class="btn btn-muted" onclick="closeConfirm()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const state = {
+  jobs: {},
+  selectedJob: null,
+  disks: [],
+  tab: 'backup'
+};
+
+// ── Socket ───────────────────────────────────────────────────────────────────
+const socket = io();
+
+socket.on('connect', () => {
+  console.log('[Socket] Connected');
+});
+
+socket.on('jobs:state', (jobs) => {
+  state.jobs = jobs;
+  renderJobList();
+});
+
+socket.on('job:created', (job) => {
+  state.jobs[job.id] = job;
+  renderJobList();
+  selectJob(job.id);
+  switchTab('jobs');
+  toast(`Job "${job.name}" started`, 'info');
+});
+
+socket.on('job:update', (job) => {
+  if (state.jobs[job.id]) {
+    Object.assign(state.jobs[job.id], job);
+  } else if (job.id) {
+    state.jobs[job.id] = job;
+  }
+  renderJobList();
+  if (state.selectedJob === job.id) renderJobDetail(job.id);
+});
+
+socket.on('job:progress', (progress) => {
+  if (!state.jobs[progress.jobId]) return;
+  state.jobs[progress.jobId].progress = progress;
+  if (state.selectedJob === progress.jobId) updateProgressUI(progress);
+});
+
+socket.on('job:log', (entry) => {
+  appendLog(entry);
+});
+
+socket.on('job:paused', ({ jobId }) => {
+  if (state.jobs[jobId]) state.jobs[jobId].status = 'paused';
+  renderJobList();
+  if (state.selectedJob === jobId) renderJobDetail(jobId);
+  toast('Job paused', 'info');
+});
+
+socket.on('job:resumed', ({ jobId }) => {
+  if (state.jobs[jobId]) state.jobs[jobId].status = 'running';
+  renderJobList();
+  if (state.selectedJob === jobId) renderJobDetail(jobId);
+  toast('Job resumed', 'info');
+});
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+});
+
+function switchTab(name) {
+  state.tab = name;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
+
+  if (name === 'files') loadFiles();
+  if (name === 'disks') loadDisksPanel();
+  if (name === 'backup' || name === 'restore') refreshDisks();
+  if (name === 'restore') loadBackupFiles();
+}
+
+// ── System Info ──────────────────────────────────────────────────────────────
+async function loadSystemInfo() {
+  try {
+    const r = await fetch('/api/disks/system');
+    const d = await r.json();
+    document.getElementById('sysHostname').textContent = d.hostname || '—';
+    document.getElementById('sysKernel').textContent = d.kernel || '—';
+    const memUsed = d.memTotal - d.memFree;
+    const memPct = d.memTotal > 0 ? Math.round(memUsed / d.memTotal * 100) : 0;
+    document.getElementById('sysMem').textContent = `MEM ${memPct}%`;
+    document.getElementById('sbKernel').textContent = d.kernel || '—';
+    document.getElementById('sbArch').textContent = d.arch || '—';
+    document.getElementById('sbUptime').textContent = d.uptime || '—';
+    document.getElementById('sbCpu').textContent = d.cpuInfo || '—';
+    document.getElementById('sysbar').style.display = 'flex';
+  } catch (_) {}
+}
+
+// ── Disks ────────────────────────────────────────────────────────────────────
+async function refreshDisks() {
+  try {
+    const r = await fetch('/api/disks');
+    const { disks } = await r.json();
+    state.disks = disks;
+    renderDiskPicker('diskGrid', 'bkSource', disks, ['disk', 'part']);
+    renderDiskPicker('restoreDiskGrid', 'rsDest', disks, ['disk', 'part']);
+  } catch (err) {
+    document.getElementById('diskGrid').innerHTML = `<div style="color:var(--danger);font-family:var(--mono);font-size:11px">Error: ${err.message}</div>`;
+  }
+}
+
+function renderDiskPicker(gridId, inputId, disks, types) {
+  const grid = document.getElementById(gridId);
+  if (!grid) return;
+  const filtered = disks.filter(d => types.includes(d.type));
+  if (!filtered.length) {
+    grid.innerHTML = '<div style="color:var(--muted);font-family:var(--mono);font-size:11px">No block devices found (requires host /dev access)</div>';
+    return;
+  }
+  grid.innerHTML = filtered.map(d => `
+    <div class="disk-card ${d.recommended ? 'recommended' : ''}" onclick="selectDisk('${gridId}','${inputId}','${d.path}',this)">
+      <div class="dk-name">${d.path}</div>
+      <div class="dk-size">${d.sizeHuman}</div>
+      <div class="dk-info">${[d.type.toUpperCase(), d.fstype, d.model].filter(Boolean).join(' · ')}</div>
+      ${d.mountpoint ? `<div class="dk-info">→ ${d.mountpoint}</div>` : ''}
+      ${d.warnings && d.warnings.filter(Boolean).length ? `<div class="dk-warn">⚠ ${d.warnings.filter(Boolean).join(', ')}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+function selectDisk(gridId, inputId, path, el) {
+  document.querySelectorAll(`#${gridId} .disk-card`).forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById(inputId).value = path;
+}
+
+function onTypeChange() {
+  const type = document.getElementById('bkType').value;
+  const isImage = type === 'image';
+  document.getElementById('diskPickerSection').style.display = isImage ? 'block' : 'none';
+  document.getElementById('excludeField').style.display = isImage ? 'none' : 'block';
+  document.getElementById('bkSource').placeholder = isImage ? '/dev/sda  or  /dev/nvme0n1' : '/home/user  or  /var/www';
+  document.getElementById('bkSourceHint').textContent = isImage ? 'Block device to clone' : 'Directory to backup';
+  if (isImage) refreshDisks();
+}
+
+function onRestoreTypeChange() {
+  const type = document.getElementById('rsType').value;
+  const isImage = type === 'image';
+  document.getElementById('imageRestoreWarn').style.display = isImage ? 'block' : 'none';
+  document.getElementById('restoreDiskSection').style.display = isImage ? 'block' : 'none';
+  document.getElementById('rsDestLabel').textContent = isImage ? 'Target Device (WILL BE OVERWRITTEN)' : 'Destination Directory';
+  document.getElementById('rsDest').placeholder = isImage ? '/dev/sdb' : '/data/restores/my_backup_restored';
+  document.getElementById('rsDestHint').textContent = isImage ? 'Block device to write image to' : 'Directory where files will be extracted';
+  if (isImage) refreshDisks();
+}
+
+// ── Backup ───────────────────────────────────────────────────────────────────
+async function startBackup() {
+  const name = document.getElementById('bkName').value.trim();
+  const type = document.getElementById('bkType').value;
+  const source = document.getElementById('bkSource').value.trim();
+  const destination = document.getElementById('bkDest').value.trim();
+  const excludesRaw = document.getElementById('bkExcludes').value;
+  const excludes = excludesRaw.split('\n').map(e => e.trim()).filter(Boolean);
+
+  if (!source) return toast('Source path is required', 'error');
+
+  if (type === 'image') {
+    confirm2(
+      '⚠ Disk Image Backup',
+      `You are about to create a full disk image of:\n${source}\n\nThis may take a long time. Continue?`,
+      () => doStartBackup({ type, source, destination, name, excludes })
+    );
+  } else {
+    doStartBackup({ type, source, destination, name, excludes });
+  }
+}
+
+async function doStartBackup(body) {
+  try {
+    const r = await fetch('/api/backup/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!d.success) toast(d.error || 'Failed to start', 'error');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ── Restore ──────────────────────────────────────────────────────────────────
+async function loadBackupFiles() {
+  try {
+    const r = await fetch('/api/backup/files');
+    const { files } = await r.json();
+    const sel = document.getElementById('rsSourceSelect');
+    sel.innerHTML = '<option value="">— select a backup file —</option>' +
+      files.map(f => `<option value="${f.path}">${f.name} (${f.sizeHuman}) [${f.type}]</option>`).join('');
+  } catch (_) {}
+}
+
+async function startRestore() {
+  const type = document.getElementById('rsType').value;
+  const source = document.getElementById('rsSource').value.trim();
+  const destination = document.getElementById('rsDest').value.trim();
+
+  if (!source) return toast('Source backup path is required', 'error');
+
+  if (type === 'image') {
+    if (!destination) return toast('Target device is required for image restore', 'error');
+    confirm2(
+      '⚠⚠ DESTRUCTIVE OPERATION ⚠⚠',
+      `This will ERASE ALL DATA on:\n${destination}\n\nAnd restore the image from:\n${source}\n\nThis CANNOT be undone. Are you absolutely sure?`,
+      () => doStartRestore({ type, source, destination })
+    );
+  } else {
+    doStartRestore({ type, source, destination });
+  }
+}
+
+async function doStartRestore(body) {
+  try {
+    const r = await fetch('/api/restore/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if (!d.success) toast(d.error || 'Failed to start restore', 'error');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function verifyBackup() {
+  const source = document.getElementById('rsSource').value.trim();
+  if (!source) return toast('Select a backup to verify', 'error');
+  toast('Verifying archive integrity...', 'info');
+  try {
+    const r = await fetch('/api/restore/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source })
+    });
+    const d = await r.json();
+    if (d.valid) toast(`✓ Backup valid — ${d.fileCount || ''} files`, 'success');
+    else toast(`✗ Backup invalid: ${d.error}`, 'error');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+// ── Job List ─────────────────────────────────────────────────────────────────
+function renderJobList() {
+  const list = document.getElementById('jobList');
+  const jobs = Object.values(state.jobs).sort((a, b) => b.createdAt - a.createdAt);
+  if (!jobs.length) {
+    list.innerHTML = '<div style="padding:20px; font-size:10px; color:var(--muted); font-family:var(--mono)">No jobs yet</div>';
+    return;
+  }
+  list.innerHTML = jobs.map(j => `
+    <div class="job-item ${state.selectedJob === j.id ? 'selected' : ''}" onclick="selectJob('${j.id}')">
+      <div class="job-name">${j.name}</div>
+      <div class="job-meta">${j.type} · ${timeAgo(j.createdAt)}</div>
+      <span class="job-status status-${j.status}">${j.status}</span>
+      ${j.progress && j.progress.percent ? `<div style="margin-top:4px;background:var(--bg3);height:2px;border-radius:1px"><div style="height:100%;width:${j.progress.percent}%;background:var(--accent);border-radius:1px;transition:width 0.5s"></div></div>` : ''}
+    </div>
+  `).join('');
+}
+
+function selectJob(id) {
+  state.selectedJob = id;
+  renderJobList();
+  renderJobDetail(id);
+  if (state.tab !== 'jobs') switchTab('jobs');
+}
+
+function renderJobDetail(id) {
+  const job = state.jobs[id];
+  if (!job) return;
+
+  const area = document.getElementById('jobDetailArea');
+  const isRunnable = ['running', 'paused', 'queued'].includes(job.status);
+  const isPaused = job.status === 'paused';
+  const isRunning = job.status === 'running';
+  const p = job.progress || {};
+
+  area.innerHTML = `
+    <div class="job-detail">
+      <div class="job-header">
+        <div>
+          <div class="job-title">${job.name}</div>
+          <div class="job-subtitle">${job.type} · ${job.source} → ${job.destFile || job.destination || ''}</div>
+        </div>
+        <span class="job-status status-${job.status}" style="font-size:11px;padding:3px 8px">${job.status}</span>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="progress-bar-wrap">
+        <div class="progress-bar ${isPaused ? 'paused' : ''}" id="jProgressBar" style="width:${p.percent || 0}%"></div>
+        <div class="progress-pct" id="jProgressPct">${p.percent || 0}%</div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-label">Transferred</div>
+          <div class="stat-value" id="jStatBytes">${humanSize(p.bytesWritten || 0)}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Rate</div>
+          <div class="stat-value" id="jStatRate">${p.rate || '—'}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Elapsed</div>
+          <div class="stat-value" id="jStatElapsed">${p.elapsed ? p.elapsed + 's' : '—'}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">ETA</div>
+          <div class="stat-value" id="jStatEta">${p.eta ? p.eta + 's' : '—'}</div>
+        </div>
+      </div>
+
+      ${p.fileCount ? `<div style="font-family:var(--mono);font-size:11px;color:var(--muted);margin:4px 0">Files processed: <b style="color:var(--text)">${p.fileCount}</b></div>` : ''}
+      ${p.currentFile ? `<div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ ${p.currentFile}</div>` : ''}
+
+      <!-- Controls -->
+      ${isRunnable ? `
+      <div style="display:flex;gap:8px;margin:12px 0">
+        ${isRunning ? `<button class="btn btn-warn" onclick="pauseJob('${id}')">⏸ Pause</button>` : ''}
+        ${isPaused ? `<button class="btn btn-success" onclick="resumeJob('${id}')">▶ Resume</button>` : ''}
+        <button class="btn btn-danger" onclick="cancelJob('${id}')">✕ Cancel</button>
+      </div>` : ''}
+
+      ${job.error ? `<div style="padding:8px 12px;background:rgba(239,83,80,0.08);border:1px solid rgba(239,83,80,0.3);border-radius:3px;font-family:var(--mono);font-size:11px;color:var(--danger);margin:8px 0">Error: ${job.error}</div>` : ''}
+
+      ${job.status === 'completed' ? `<div style="padding:8px 12px;background:rgba(102,187,106,0.08);border:1px solid rgba(102,187,106,0.3);border-radius:3px;font-family:var(--mono);font-size:11px;color:var(--success);margin:8px 0">✓ Completed${job.finalSize ? ' · ' + humanSize(job.finalSize) : ''}${job.fileCount ? ' · ' + job.fileCount + ' files' : ''}</div>` : ''}
+
+      <!-- Log terminal -->
+      <div class="log-terminal" id="logTerminal-${id}"></div>
+    </div>
+  `;
+}
+
+function updateProgressUI(p) {
+  const bar = document.getElementById('jProgressBar');
+  const pct = document.getElementById('jProgressPct');
+  if (bar) bar.style.width = (p.percent || 0) + '%';
+  if (pct) pct.textContent = (p.percent || 0) + '%';
+
+  const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setEl('jStatBytes', humanSize(p.bytesWritten || 0));
+  setEl('jStatRate', p.rate || '—');
+  setEl('jStatElapsed', p.elapsed ? p.elapsed + 's' : '—');
+  setEl('jStatEta', p.eta && p.eta !== '...' ? p.eta + 's' : (p.eta || '—'));
+}
+
+function appendLog(entry) {
+  if (!entry.jobId) return;
+  const term = document.getElementById(`logTerminal-${entry.jobId}`);
+  if (!term) return;
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+  const line = document.createElement('div');
+  line.className = 'log-entry';
+  line.innerHTML = `<span class="log-time">${time}</span><span class="log-msg ${entry.level === 'warn' ? 'log-warn' : entry.level === 'error' ? 'log-error' : ''}">${escapeHtml(entry.msg)}</span>`;
+  term.appendChild(line);
+  if (term.children.length > 300) term.removeChild(term.firstChild);
+  term.scrollTop = term.scrollHeight;
+}
+
+// ── Job Controls ──────────────────────────────────────────────────────────────
+async function pauseJob(id) {
+  socket.emit('job:pause', { jobId: id });
+}
+
+async function resumeJob(id) {
+  socket.emit('job:resume', { jobId: id });
+}
+
+async function cancelJob(id) {
+  confirm2('Cancel Job', 'Are you sure you want to cancel this job?', () => {
+    socket.emit('job:cancel', { jobId: id });
+  });
+}
+
+async function clearCompletedJobs() {
+  try {
+    await fetch('/api/jobs', { method: 'DELETE' });
+    const r = await fetch('/api/jobs');
+    const { jobs } = await r.json();
+    state.jobs = {};
+    jobs.forEach(j => state.jobs[j.id] = j);
+    renderJobList();
+    toast('Cleared completed jobs', 'info');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ── Files Panel ───────────────────────────────────────────────────────────────
+async function loadFiles() {
+  try {
+    const r = await fetch('/api/backup/files');
+    const { files } = await r.json();
+    const tbody = document.getElementById('filesBody');
+    if (!files.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="padding:20px; color:var(--muted); font-family:var(--mono); text-align:center">No backup files found</td></tr>';
+      return;
+    }
+    tbody.innerHTML = files.map(f => `
+      <tr>
+        <td style="font-weight:500">${f.name}</td>
+        <td><span class="file-type-badge ft-${f.type}">${f.type}</span></td>
+        <td>${f.sizeHuman}</td>
+        <td>${new Date(f.mtime).toLocaleString()}</td>
+        <td>
+          <button class="btn btn-primary" style="padding:3px 8px;font-size:9px" onclick="restoreFromFile('${f.path}','${f.type}')">Restore</button>
+          <button class="btn btn-muted" style="padding:3px 8px;font-size:9px;margin-left:4px" onclick="deleteFile('${f.name}')">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    document.getElementById('filesBody').innerHTML = `<tr><td colspan="5" style="color:var(--danger);font-family:var(--mono);padding:12px">${err.message}</td></tr>`;
+  }
+}
+
+function restoreFromFile(path, type) {
+  document.getElementById('rsSource').value = path;
+  document.getElementById('rsType').value = type === 'directory' ? 'directory' : type === 'rsync' ? 'rsync' : 'image';
+  onRestoreTypeChange();
+  switchTab('restore');
+}
+
+async function deleteFile(name) {
+  confirm2('Delete Backup', `Delete "${name}"? This cannot be undone.`, async () => {
+    try {
+      await fetch(`/api/backup/files/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      toast('File deleted', 'info');
+      loadFiles();
+    } catch (err) { toast(err.message, 'error'); }
+  });
+}
+
+// ── Disks Panel ───────────────────────────────────────────────────────────────
+async function loadDisksPanel() {
+  try {
+    const [diskRes, fsRes] = await Promise.all([fetch('/api/disks'), fetch('/api/disks/filesystems')]);
+    const { disks } = await diskRes.json();
+    const { filesystems } = await fsRes.json();
+
+    const fsGrid = document.getElementById('fsGrid');
+    fsGrid.innerHTML = filesystems.map(fs => {
+      const cls = fs.usedPercent > 90 ? 'danger' : fs.usedPercent > 75 ? 'warn' : '';
+      return `
+        <div class="disk-info-card">
+          <div class="dic-header">
+            <div>
+              <div class="dic-name">${fs.mountpoint}</div>
+              <div class="dic-model">${fs.device}</div>
+            </div>
+            <div class="dic-size">${fs.sizeHuman}</div>
+          </div>
+          <div class="dic-fs">${fs.fstype}</div>
+          <div class="usage-bar"><div class="usage-fill ${cls}" style="width:${fs.usedPercent}%"></div></div>
+          <div class="dic-stats"><span>${fs.usedHuman} used</span><span>${fs.availHuman} free (${100 - fs.usedPercent}%)</span></div>
+        </div>
+      `;
+    }).join('') || '<div style="color:var(--muted);font-family:var(--mono);font-size:11px">No filesystems found</div>';
+
+    const disksGrid = document.getElementById('disksGrid');
+    const mainDisks = disks.filter(d => d.type === 'disk' || d.type === 'part');
+    disksGrid.innerHTML = mainDisks.map(d => `
+      <div class="disk-info-card">
+        <div class="dic-header">
+          <div>
+            <div class="dic-name">${d.path}</div>
+            <div class="dic-model">${[d.model, d.serial].filter(Boolean).join(' | ') || d.type}</div>
+          </div>
+          <div class="dic-size">${d.sizeHuman}</div>
+        </div>
+        ${d.fstype ? `<div class="dic-fs">${d.fstype}${d.label ? ' · ' + d.label : ''}</div>` : ''}
+        ${d.mountpoint ? `<div class="dic-model">→ ${d.mountpoint}</div>` : ''}
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+          ${d.rotational ? '<span class="inline-badge">HDD</span>' : '<span class="inline-badge" style="color:var(--accent2);background:rgba(0,229,170,0.1)">SSD/NVMe</span>'}
+          ${d.removable ? '<span class="inline-badge" style="color:var(--warn);background:rgba(255,167,38,0.1)">Removable</span>' : ''}
+          ${d.readonly ? '<span class="inline-badge" style="color:var(--danger);background:rgba(239,83,80,0.1)">Read-only</span>' : ''}
+          ${d.transport ? `<span class="inline-badge">${d.transport.toUpperCase()}</span>` : ''}
+        </div>
+      </div>
+    `).join('') || '<div style="color:var(--muted);font-family:var(--mono);font-size:11px">No block devices found</div>';
+  } catch (err) {
+    document.getElementById('fsGrid').innerHTML = `<div style="color:var(--danger);font-family:var(--mono);font-size:11px">${err.message}</div>`;
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function humanSize(bytes) {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
+  if (bytes < 1099511627776) return `${(bytes / 1073741824).toFixed(2)} GB`;
+  return `${(bytes / 1099511627776).toFixed(2)} TB`;
+}
+
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+function escapeHtml(str) {
+  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+let _confirmCb = null;
+function confirm2(title, msg, cb) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent = msg;
+  _confirmCb = cb;
+  document.getElementById('confirmOverlay').classList.add('show');
+  document.getElementById('confirmOk').onclick = () => { closeConfirm(); if (_confirmCb) _confirmCb(); };
+}
+function closeConfirm() {
+  document.getElementById('confirmOverlay').classList.remove('show');
+  _confirmCb = null;
+}
+
+let _toastTimer = null;
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast ${type} show`;
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadSystemInfo();
+
+// Load initial job state
+fetch('/api/jobs').then(r => r.json()).then(({ jobs }) => {
+  state.jobs = {};
+  jobs.forEach(j => state.jobs[j.id] = j);
+  renderJobList();
+}).catch(() => {});
+
+// Refresh system info every 30s
+setInterval(loadSystemInfo, 30000);
+</script>
+</body>
+</html>
