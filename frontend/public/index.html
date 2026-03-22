@@ -782,9 +782,19 @@ function restoreFromFile(path, type) {
 
 async function deleteFile(name) {
   confirm2('Delete Backup', `Delete "${name}"?\nThis cannot be undone.`, async () => {
-    await fetch(`/api/backup/files/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    toast('File deleted', 'info');
-    loadFiles();
+    try {
+      const r = await fetch('/api/backup/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const d = await r.json();
+      if (!d.success) return toast(d.error || 'Delete failed', 'error');
+      toast(`Deleted: ${name}`, 'success');
+      loadFiles();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
   });
 }
 
@@ -859,15 +869,10 @@ function timeAgo(ts) {
 function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escJs(s) { return (s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 
-let _confirmCb = null;
 function confirm2(title, msg, cb) {
-  document.getElementById('confirmTitle').textContent = title;
-  document.getElementById('confirmMsg').textContent = msg;
-  _confirmCb = cb;
-  document.getElementById('confirmOverlay').classList.add('show');
-  document.getElementById('confirmOk').onclick = () => { closeConfirm(); if(_confirmCb) _confirmCb(); };
+  if (window.confirm(title + '\n\n' + msg)) { cb(); }
 }
-function closeConfirm() { document.getElementById('confirmOverlay').classList.remove('show'); _confirmCb = null; }
+function closeConfirm() {}
 
 let _toastTimer;
 function toast(msg, type='info') {

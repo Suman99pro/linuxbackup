@@ -17,6 +17,9 @@ services:
     volumes:
       # Persistent data — backups, restores, job DB
       - linuxbackup_data:/data
+      - /home:/mnt/host/home:ro      # backup source (read-only)
+      - /etc:/mnt/host/etc:ro
+      - /mnt/external:/mnt/external  # external drive as backup destination
 
       # ─────────────────────────────────────────────────────────────────────────
       # HOST FILESYSTEM ACCESS (uncomment as needed)
