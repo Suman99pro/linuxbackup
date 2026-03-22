@@ -9,6 +9,7 @@ const backupRoutes = require('./routes/backup');
 const restoreRoutes = require('./routes/restore');
 const diskRoutes = require('./routes/disks');
 const jobRoutes = require('./routes/jobs');
+const browseRoutes = require('./routes/browse');
 const { initSocketHandlers } = require('./services/socketService');
 const { ensureDirectories } = require('./utils/fsHelpers');
 
@@ -19,30 +20,23 @@ const io = new Server(server, {
   maxHttpBufferSize: 1e8
 });
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
 app.use(express.static(path.join(__dirname, '../frontend/public')));
-
-// Attach io to every request
 app.use((req, _res, next) => { req.io = io; next(); });
 
-// Routes
 app.use('/api/backup', backupRoutes);
 app.use('/api/restore', restoreRoutes);
 app.use('/api/disks', diskRoutes);
 app.use('/api/jobs', jobRoutes);
+app.use('/api/fs', browseRoutes);
 
-// Health check
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
-
-// SPA fallback
 app.get('*', (_req, res) =>
   res.sendFile(path.join(__dirname, '../frontend/public/index.html'))
 );
 
-// Init
 ensureDirectories();
 initSocketHandlers(io);
 
